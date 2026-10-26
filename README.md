@@ -14,6 +14,7 @@ your master, or push it for all-out lofi wonkiness.
 | Colour  | 0–100% | Head bump (up to +4 dB at 90 Hz) and top-end roll-off (20 kHz → 5 kHz) |
 | Wear    | 0–100% | Wow and flutter, hiss, dropouts, and a further loss of highs. Low settings are near-inaudible; the top end gets wonky |
 | Output  | −12 to +12 dB | Make-up gain |
+| Wow, Flutter, Dropouts, Hiss | 0–100% | Trims for each part of Wear (default 100%). Wear sets the overall amount; turn a trim down to leave that part out |
 | Lamp    | Bypass (lit when the tape is running) |
 
 Knobs: drag or scroll to turn, hold Shift for fine control, double-click to reset.

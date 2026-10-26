@@ -11,10 +11,9 @@ use std::f32::consts::{PI, TAU};
 use std::sync::Arc;
 
 pub const WIDTH: u32 = 440;
-pub const HEIGHT: u32 = 400;
+pub const HEIGHT: u32 = 490;
 const DESIGN: Rect = Rect::from_min_max(Pos2::ZERO, Pos2::new(WIDTH as f32, HEIGHT as f32));
 
-const KNOB_RADIUS: f32 = 28.0;
 /// Knobs turn +-135 degrees from straight up
 const SWEEP: f32 = 0.75 * PI;
 const INK: Color32 = Color32::from_rgb(40, 34, 28);
@@ -122,12 +121,24 @@ fn deck(ui: &Ui, setter: &ParamSetter, params: &SpoolParams) {
         INK,
     );
 
-    for (i, param) in [&params.drive, &params.colour, &params.wear, &params.output]
-        .into_iter()
-        .enumerate()
-    {
-        let x = body.left() + body.width() * (i as f32 + 0.5) / 4.0;
-        knob(ui, setter, param, Pos2::new(x, body.bottom() - 66.0));
+    // Main controls, then the trims for each part of Wear underneath
+    let rows = [
+        (
+            [&params.drive, &params.colour, &params.wear, &params.output],
+            310.0,
+            28.0,
+        ),
+        (
+            [&params.wow, &params.flutter, &params.dropouts, &params.hiss],
+            408.0,
+            18.0,
+        ),
+    ];
+    for (row, y, radius) in rows {
+        for (i, param) in row.into_iter().enumerate() {
+            let x = body.left() + body.width() * (i as f32 + 0.5) / 4.0;
+            knob(ui, setter, param, Pos2::new(x, body.top() + y), radius);
+        }
     }
 }
 
@@ -178,8 +189,8 @@ fn dir(angle: f32) -> Vec2 {
     Vec2::new(angle.sin(), -angle.cos())
 }
 
-fn knob(ui: &Ui, setter: &ParamSetter, param: &FloatParam, center: Pos2) {
-    let rect = Rect::from_center_size(center, Vec2::splat(2.0 * KNOB_RADIUS + 12.0));
+fn knob(ui: &Ui, setter: &ParamSetter, param: &FloatParam, center: Pos2, radius: f32) {
+    let rect = Rect::from_center_size(center, Vec2::splat(2.0 * radius + 12.0));
     let response = ui.interact(rect, ui.id().with(param.name()), Sense::click_and_drag());
 
     // Accumulate drags in egui memory since the param value can lag behind the host round trip
@@ -244,50 +255,50 @@ fn knob(ui: &Ui, setter: &ParamSetter, param: &FloatParam, center: Pos2) {
     for i in 0..=10 {
         let a = -SWEEP + 2.0 * SWEEP * i as f32 / 10.0;
         let r = if i % 5 == 0 { 2.0 } else { 1.2 };
-        p.circle_filled(center + dir(a) * (KNOB_RADIUS + 9.0), r, INK);
+        p.circle_filled(center + dir(a) * (radius + 9.0), r, INK);
     }
 
     // Knurled skirt that turns with the knob
     p.circle_filled(
         center + Vec2::new(0.0, 3.0),
-        KNOB_RADIUS,
+        radius,
         Color32::from_black_alpha(90),
     );
-    p.circle_filled(center, KNOB_RADIUS, Color32::from_gray(8));
+    p.circle_filled(center, radius, Color32::from_gray(8));
     for i in 0..40 {
         let a = angle + i as f32 * TAU / 40.0;
         p.line_segment(
             [
-                center + dir(a) * (KNOB_RADIUS - 6.0),
-                center + dir(a) * (KNOB_RADIUS - 0.5),
+                center + dir(a) * (radius - 6.0),
+                center + dir(a) * (radius - 0.5),
             ],
             Stroke::new(1.5_f32, Color32::from_gray(42)),
         );
     }
-    p.circle_filled(center, KNOB_RADIUS - 7.0, Color32::from_gray(26));
+    p.circle_filled(center, radius - 7.0, Color32::from_gray(26));
     p.circle_stroke(
         center,
-        KNOB_RADIUS - 7.0,
+        radius - 7.0,
         Stroke::new(1.0_f32, Color32::from_gray(58)),
     );
     p.line_segment(
         [
-            center + dir(angle) * 7.0,
-            center + dir(angle) * (KNOB_RADIUS - 9.0),
+            center + dir(angle) * (0.25 * radius),
+            center + dir(angle) * (0.68 * radius),
         ],
         Stroke::new(3.0_f32, FACEPLATE),
     );
 
     p.text(
-        center - Vec2::new(0.0, KNOB_RADIUS + 16.0),
+        center - Vec2::new(0.0, radius + 16.0),
         Align2::CENTER_BOTTOM,
         param.name().to_uppercase(),
-        FontId::proportional(12.0),
+        FontId::proportional(if radius < 24.0 { 10.0 } else { 12.0 }),
         INK,
     );
     if response.hovered() || response.dragged() {
         p.text(
-            center + Vec2::new(0.0, KNOB_RADIUS + 14.0),
+            center + Vec2::new(0.0, radius + 14.0),
             Align2::CENTER_TOP,
             param.normalized_value_to_string(value, true),
             FontId::proportional(11.0),

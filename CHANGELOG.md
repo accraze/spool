@@ -6,6 +6,14 @@ All notable changes to Spool are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- Wow, Flutter, Dropouts and Hiss trims under the main knobs. Each scales its part of Wear, so
+  you can have a wobbly tape without hiss, or hiss without the wobble. They default to 100%, so
+  existing projects sound the same.
+
+### Changed
+- The window is taller to fit the trims. Projects saved with 0.1.0 open at the new default size.
+
 ## [0.1.0] - 2026-10-26
 
 ### Added

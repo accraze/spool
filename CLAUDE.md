@@ -28,11 +28,14 @@ cargo clippy --release --lib
 - `BASE_DELAY` is reported as latency and must stay larger than `WOW_DEPTH + FLUTTER_DEPTH`
   (`wear_wobbles_and_stays_in_the_buffer` checks it). Delay buffers are allocated in `initialize()`,
   because `reset()` can run on the audio thread.
-- `Coeffs::new(drive_db, colour, wear, fs)` maps knob values to coefficients; it's shared by `process()` and
+- `Wear` bundles the Wear amount with the Wow/Flutter/Dropouts/Hiss trims (0..1, default 1). Trims multiply their
+  part of Wear, so all-1 trims sound exactly like 0.1.0's single knob; `Wear::all(x)` is that case for tests.
+- `Coeffs::new(drive_db, colour, &wear, fs)` maps knob values to coefficients; it's shared by `process()` and
   the tests, so change the mapping there only.
 - Wear is mostly squared (wow depth, hiss) or cubed (dropout rate) so low settings stay subtle for mastering.
 - GUI lives in `src/editor.rs`: a hand-painted reel-to-reel faceplate. `knob()`, `screw()` and window scaling
   come from Rodent (see `../rodent/CLAUDE.md`). The pilot lamp is the bypass button. Reels are static.
+  `knob()` takes a radius: 28 for the main row, 18 for the Wear trims row.
 - README screenshot: same standalone recipe as `../wailer/CLAUDE.md` (match the `"Spool": ()` window).
 - The audio thread must not allocate (`assert_process_allocs` is enabled).
 - `CLAP_ID` and `VST3_CLASS_ID` must never change, or saved Bitwig projects lose the plugin.

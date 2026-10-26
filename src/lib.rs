@@ -5,7 +5,8 @@
 //!    base delay is reported as latency, and the dry signal is read at that base so bypass lines up.
 //! 2. Record head: pre-emphasis, tape saturation at `OVERSAMPLING`x, then de-emphasis, so the
 //!    highs saturate first like real tape. Drive is compensated so quiet signals keep their level.
-//! 3. Playback: head bump and high-frequency loss (Colour, Wear), hiss and dropouts (Wear).
+//! 3. Playback: head bump and high-frequency loss (Colour, Wear), hiss and dropouts (Wear, each
+//!    part of Wear also has its own trim).
 //! 4. Output.
 
 use nih_plug::prelude::*;
@@ -181,6 +182,31 @@ impl DelayLine {
     }
 }
 
+/// Wear amount plus the trims for each of its parts, all 0..1. Trims scale their part of Wear,
+/// so full trims reproduce the single Wear knob of 0.1.0.
+#[derive(Clone, Copy)]
+struct Wear {
+    amount: f32,
+    wow: f32,
+    flutter: f32,
+    dropouts: f32,
+    hiss: f32,
+}
+
+impl Wear {
+    /// Wear with every part fully on
+    #[cfg(test)]
+    fn all(amount: f32) -> Self {
+        Self {
+            amount,
+            wow: 1.0,
+            flutter: 1.0,
+            dropouts: 1.0,
+            hiss: 1.0,
+        }
+    }
+}
+
 /// Tape motion shared by both channels: one tape, one capstan.
 struct Transport {
     wow_phase: f32,
@@ -216,7 +242,8 @@ impl Transport {
     }
 
     /// Returns the playback delay in samples and the dropout gain.
-    fn next(&mut self, wear: f32, base: f32, fs: f32) -> (f32, f32) {
+    fn next(&mut self, w: &Wear, base: f32, fs: f32) -> (f32, f32) {
+        let wear = w.amount;
         let worn = wear * wear;
         self.wow_phase = (self.wow_phase + TAU * WOW_RATE / fs) % TAU;
         self.flutter_phase = (self.flutter_phase + TAU * FLUTTER_RATE / fs) % TAU;
@@ -227,14 +254,14 @@ impl Transport {
         let drift = (self.drift.lp(noise, g) * (1.5 / g).sqrt()).clamp(-1.0, 1.0);
         let wow = 0.7 * self.wow_phase.sin() + 0.3 * drift;
         let delay = base
-            + worn * WOW_DEPTH * fs * wow
-            + wear * FLUTTER_DEPTH * fs * self.flutter_phase.sin();
+            + w.wow * worn * WOW_DEPTH * fs * wow
+            + w.flutter * wear * FLUTTER_DEPTH * fs * self.flutter_phase.sin();
 
         if self.dropout_left > 0 {
             self.dropout_left -= 1;
         } else {
             self.dropout_target = 1.0;
-            if (self.noise() + 1.0) * 0.5 < worn * wear * DROPOUT_RATE / fs {
+            if (self.noise() + 1.0) * 0.5 < w.dropouts * worn * wear * DROPOUT_RATE / fs {
                 self.dropout_left = ((0.03 + 0.12 * (self.noise() + 1.0) * 0.5) * fs) as usize;
                 self.dropout_target = 1.0 - wear * (0.45 + 0.25 * self.noise());
             }
@@ -258,8 +285,8 @@ struct Coeffs {
 }
 
 impl Coeffs {
-    fn new(drive_db: f32, colour: f32, wear: f32, fs: f32) -> Self {
-        let hf_fc = HF_OPEN * (HF_DARK / HF_OPEN).powf(colour) * HF_WORN.powf(wear);
+    fn new(drive_db: f32, colour: f32, wear: &Wear, fs: f32) -> Self {
+        let hf_fc = HF_OPEN * (HF_DARK / HF_OPEN).powf(colour) * HF_WORN.powf(wear.amount);
         Self {
             drive: util::db_to_gain(drive_db),
             g_emph: prewarp(EMPHASIS_FC, fs),
@@ -268,7 +295,7 @@ impl Coeffs {
             g_dc: prewarp(DC_FC, fs),
             bump: Bq::peak(BUMP_FC, fs, BUMP_Q, BUMP_DB * colour),
             hf: Bq::lowpass(hf_fc, fs, 0.707),
-            hiss: HISS * wear * wear,
+            hiss: HISS * wear.hiss * wear.amount * wear.amount,
         }
     }
 }
@@ -332,7 +359,8 @@ struct Spool {
 
 #[derive(Params)]
 struct SpoolParams {
-    #[persist = "editor-size"]
+    // Renamed from "editor-size" so projects saved with the 0.1.0 layout open at the taller size
+    #[persist = "editor-size-2"]
     editor_state: Arc<EguiState>,
 
     #[id = "drive"]
@@ -341,6 +369,14 @@ struct SpoolParams {
     colour: FloatParam,
     #[id = "wear"]
     wear: FloatParam,
+    #[id = "wow"]
+    wow: FloatParam,
+    #[id = "flutter"]
+    flutter: FloatParam,
+    #[id = "dropouts"]
+    dropouts: FloatParam,
+    #[id = "hiss"]
+    hiss: FloatParam,
     #[id = "output"]
     output: FloatParam,
     #[id = "bypass"]
@@ -372,6 +408,10 @@ impl Default for SpoolParams {
             .with_unit(" dB"),
             colour: knob("Colour", 0.3),
             wear: knob("Wear", 0.1),
+            wow: knob("Wow", 1.0),
+            flutter: knob("Flutter", 1.0),
+            dropouts: knob("Dropouts", 1.0),
+            hiss: knob("Hiss", 1.0),
             output: FloatParam::new(
                 "Output",
                 util::db_to_gain(0.0),
@@ -478,15 +518,21 @@ impl Plugin for Spool {
         let fade_step = 1.0 / (BYPASS_FADE * fs);
 
         for mut frame in buffer.iter_samples() {
-            let wear = self.params.wear.smoothed.next();
+            let wear = Wear {
+                amount: self.params.wear.smoothed.next(),
+                wow: self.params.wow.smoothed.next(),
+                flutter: self.params.flutter.smoothed.next(),
+                dropouts: self.params.dropouts.smoothed.next(),
+                hiss: self.params.hiss.smoothed.next(),
+            };
             let coeffs = Coeffs::new(
                 self.params.drive.smoothed.next(),
                 self.params.colour.smoothed.next(),
-                wear,
+                &wear,
                 fs,
             );
             let output = self.params.output.smoothed.next();
-            let (delay, dropout) = self.transport.next(wear, base, fs);
+            let (delay, dropout) = self.transport.next(&wear, base, fs);
             let target = if self.params.bypass.value() { 0.0 } else { 1.0 };
             self.wet += (target - self.wet).clamp(-fade_step, fade_step);
 
@@ -538,14 +584,18 @@ mod tests {
     /// Runs `secs` of a sine through one channel the way `process()` does and returns the output,
     /// skipping the first 10% while filters settle.
     fn render(drive: f32, colour: f32, wear: f32, fs: f32, freq: f32, amp: f32) -> Vec<f32> {
+        render_worn(drive, colour, Wear::all(wear), fs, freq, amp)
+    }
+
+    fn render_worn(drive: f32, colour: f32, wear: Wear, fs: f32, freq: f32, amp: f32) -> Vec<f32> {
         let base = (BASE_DELAY * fs).round() as usize;
-        let c = Coeffs::new(drive, colour, wear, fs);
+        let c = Coeffs::new(drive, colour, &wear, fs);
         let mut ch = Channel::new(fs, base);
         let mut tr = Transport::default();
         let n = fs as usize;
         (0..n)
             .map(|i| {
-                let (delay, dropout) = tr.next(wear, base as f32, fs);
+                let (delay, dropout) = tr.next(&wear, base as f32, fs);
                 ch.delay.push(amp * (2.0 * PI * freq * i as f32 / fs).sin());
                 let tape = ch.delay.read(delay);
                 ch.process(tape, &c, tr.noise()) * dropout
@@ -581,6 +631,16 @@ mod tests {
     fn silence_in_silence_out_without_wear() {
         let out = render(24.0, 1.0, 0.0, 48000.0, 0.0, 0.0);
         assert!(peak(&out) < 1e-6);
+    }
+
+    #[test]
+    fn hiss_trim_silences_worn_tape() {
+        let quiet = Wear {
+            hiss: 0.0,
+            ..Wear::all(1.0)
+        };
+        assert!(peak(&render_worn(24.0, 1.0, quiet, 48000.0, 0.0, 0.0)) < 1e-6);
+        assert!(peak(&render(24.0, 1.0, 1.0, 48000.0, 0.0, 0.0)) > 1e-4);
     }
 
     #[test]
@@ -622,15 +682,21 @@ mod tests {
         let fs = 48000.0;
         let base = (BASE_DELAY * fs).round();
         // Returns the (min, max) playback delay over 10 s of tape
-        let swing = |wear| {
+        let swing = |wear: Wear| {
             let mut tr = Transport::default();
             (0..10 * fs as usize).fold((f32::MAX, f32::MIN), |(lo, hi), _| {
-                let d = tr.next(wear, base, fs).0;
+                let d = tr.next(&wear, base, fs).0;
                 (lo.min(d), hi.max(d))
             })
         };
-        assert_eq!(swing(0.0), (base, base));
-        let (lo, hi) = swing(1.0);
+        assert_eq!(swing(Wear::all(0.0)), (base, base));
+        let steady = Wear {
+            wow: 0.0,
+            flutter: 0.0,
+            ..Wear::all(1.0)
+        };
+        assert_eq!(swing(steady), (base, base));
+        let (lo, hi) = swing(Wear::all(1.0));
         // At least +-2 ms of wow, and never closer than 1 sample or past the buffer's 2 * base
         assert!(hi - lo > 0.004 * fs, "swing {lo}..{hi}");
         assert!(lo >= 1.0 && hi + 2.0 < 2.0 * base, "swing {lo}..{hi}");

@@ -6,6 +6,8 @@ All notable changes to Spool are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-26
+
 ### Added
 - Wow, Flutter, Dropouts and Hiss trims under the main knobs, 0–200%. Each one sets how hard its
   part of Wear is pushed, so you can have a wobbly tape without hiss, lots of wow at low Wear, or
@@ -27,5 +29,6 @@ All notable changes to Spool are documented here. The format follows
   of latency (the wow/flutter delay line), and bypass stays time-aligned.
 - Hand-drawn reel-to-reel GUI with resizable window.
 
-[Unreleased]: https://github.com/accraze/spool/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/accraze/spool/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/accraze/spool/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/accraze/spool/releases/tag/v0.1.0

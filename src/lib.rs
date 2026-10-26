@@ -18,8 +18,9 @@ mod editor;
 
 const OVERSAMPLING: usize = 4;
 
-// Transport, delays in seconds. BASE_DELAY must exceed the full modulation depth.
-const BASE_DELAY: f32 = 0.007;
+// Transport, delays in seconds. BASE_DELAY must exceed the full modulation depth, which is
+// 4x WOW_DEPTH plus 2x FLUTTER_DEPTH with both trims at 200%.
+const BASE_DELAY: f32 = 0.025;
 const WOW_DEPTH: f32 = 0.006;
 const WOW_RATE: f32 = 0.5;
 const DRIFT_FC: f32 = 0.3;
@@ -182,8 +183,8 @@ impl DelayLine {
     }
 }
 
-/// Wear amount plus the trims for each of its parts, all 0..1. Trims scale their part of Wear,
-/// so full trims reproduce the single Wear knob of 0.1.0.
+/// Wear amount (0..1) plus the trims for each of its parts (0..2). A part acts as if Wear were
+/// `amount * trim`, so a trim of 1 reproduces the single Wear knob of 0.1.0.
 #[derive(Clone, Copy)]
 struct Wear {
     amount: f32,
@@ -194,7 +195,7 @@ struct Wear {
 }
 
 impl Wear {
-    /// Wear with every part fully on
+    /// Wear with every trim at 100%
     #[cfg(test)]
     fn all(amount: f32) -> Self {
         Self {
@@ -243,8 +244,6 @@ impl Transport {
 
     /// Returns the playback delay in samples and the dropout gain.
     fn next(&mut self, w: &Wear, base: f32, fs: f32) -> (f32, f32) {
-        let wear = w.amount;
-        let worn = wear * wear;
         self.wow_phase = (self.wow_phase + TAU * WOW_RATE / fs) % TAU;
         self.flutter_phase = (self.flutter_phase + TAU * FLUTTER_RATE / fs) % TAU;
 
@@ -253,17 +252,20 @@ impl Transport {
         let noise = self.noise();
         let drift = (self.drift.lp(noise, g) * (1.5 / g).sqrt()).clamp(-1.0, 1.0);
         let wow = 0.7 * self.wow_phase.sin() + 0.3 * drift;
+        let (wow_amount, flutter_amount) = (w.amount * w.wow, w.amount * w.flutter);
         let delay = base
-            + w.wow * worn * WOW_DEPTH * fs * wow
-            + w.flutter * wear * FLUTTER_DEPTH * fs * self.flutter_phase.sin();
+            + wow_amount * wow_amount * WOW_DEPTH * fs * wow
+            + flutter_amount * FLUTTER_DEPTH * fs * self.flutter_phase.sin();
 
         if self.dropout_left > 0 {
             self.dropout_left -= 1;
         } else {
             self.dropout_target = 1.0;
-            if (self.noise() + 1.0) * 0.5 < w.dropouts * worn * wear * DROPOUT_RATE / fs {
+            let a = w.amount * w.dropouts;
+            if (self.noise() + 1.0) * 0.5 < a * a * a * DROPOUT_RATE / fs {
                 self.dropout_left = ((0.03 + 0.12 * (self.noise() + 1.0) * 0.5) * fs) as usize;
-                self.dropout_target = 1.0 - wear * (0.45 + 0.25 * self.noise());
+                // Past 100% the deepest dropouts go fully silent
+                self.dropout_target = (1.0 - a * (0.45 + 0.25 * self.noise())).max(0.0);
             }
         }
         self.dropout_gain +=
@@ -295,7 +297,7 @@ impl Coeffs {
             g_dc: prewarp(DC_FC, fs),
             bump: Bq::peak(BUMP_FC, fs, BUMP_Q, BUMP_DB * colour),
             hf: Bq::lowpass(hf_fc, fs, 0.707),
-            hiss: HISS * wear.hiss * wear.amount * wear.amount,
+            hiss: HISS * (wear.amount * wear.hiss).powi(2),
         }
     }
 }
@@ -391,6 +393,15 @@ fn knob(name: &str, default: f32) -> FloatParam {
         .with_string_to_value(formatters::s2v_f32_percentage())
 }
 
+/// Scales one part of Wear, 0-200%. 100% is the knob's centre and its default.
+fn trim(name: &str) -> FloatParam {
+    FloatParam::new(name, 1.0, FloatRange::Linear { min: 0.0, max: 2.0 })
+        .with_smoother(SmoothingStyle::Linear(20.0))
+        .with_unit("%")
+        .with_value_to_string(formatters::v2s_f32_percentage(0))
+        .with_string_to_value(formatters::s2v_f32_percentage())
+}
+
 impl Default for SpoolParams {
     fn default() -> Self {
         Self {
@@ -408,10 +419,10 @@ impl Default for SpoolParams {
             .with_unit(" dB"),
             colour: knob("Colour", 0.3),
             wear: knob("Wear", 0.1),
-            wow: knob("Wow", 1.0),
-            flutter: knob("Flutter", 1.0),
-            dropouts: knob("Dropouts", 1.0),
-            hiss: knob("Hiss", 1.0),
+            wow: trim("Wow"),
+            flutter: trim("Flutter"),
+            dropouts: trim("Dropouts"),
+            hiss: trim("Hiss"),
             output: FloatParam::new(
                 "Output",
                 util::db_to_gain(0.0),
@@ -697,8 +708,31 @@ mod tests {
         };
         assert_eq!(swing(steady), (base, base));
         let (lo, hi) = swing(Wear::all(1.0));
-        // At least +-2 ms of wow, and never closer than 1 sample or past the buffer's 2 * base
         assert!(hi - lo > 0.004 * fs, "swing {lo}..{hi}");
+
+        // Trims past 100% wobble more at low wear, and maxed out stay inside the buffer
+        let low = |wow| {
+            let (lo, hi) = swing(Wear {
+                wow,
+                ..Wear::all(0.3)
+            });
+            hi - lo
+        };
+        assert!(
+            low(2.0) > 3.0 * low(1.0),
+            "200% {} vs 100% {}",
+            low(2.0),
+            low(1.0)
+        );
+        let (lo, hi) = swing(Wear {
+            amount: 1.0,
+            wow: 2.0,
+            flutter: 2.0,
+            dropouts: 2.0,
+            hiss: 2.0,
+        });
+        // Never closer than 1 sample or past the buffer's 2 * base
+        assert!(hi - lo > 0.016 * fs, "swing {lo}..{hi}");
         assert!(lo >= 1.0 && hi + 2.0 < 2.0 * base, "swing {lo}..{hi}");
     }
 

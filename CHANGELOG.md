@@ -7,11 +7,13 @@ All notable changes to Spool are documented here. The format follows
 ## [Unreleased]
 
 ### Added
-- Wow, Flutter, Dropouts and Hiss trims under the main knobs. Each scales its part of Wear, so
-  you can have a wobbly tape without hiss, or hiss without the wobble. They default to 100%, so
-  existing projects sound the same.
+- Wow, Flutter, Dropouts and Hiss trims under the main knobs, 0–200%. Each one sets how hard its
+  part of Wear is pushed, so you can have a wobbly tape without hiss, lots of wow at low Wear, or
+  go past the old maximum (up to 4x the wow depth). They default to 100%, so existing projects
+  sound the same.
 
 ### Changed
+- Latency is now 25 ms (was 7 ms) to make room for the deeper wow. Hosts compensate for it.
 - The window is taller to fit the trims. Projects saved with 0.1.0 open at the new default size.
 
 ## [0.1.0] - 2026-10-26

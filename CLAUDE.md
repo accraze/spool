@@ -25,11 +25,11 @@ cargo clippy --release --lib
   dropout gain. Each channel pushes its input into its `DelayLine`, reads dry at the fixed base delay and
   tape at the modulated delay, then `Channel::process` runs emphasis → oversampled saturation → de-emphasis →
   head bump → hiss → HF loss.
-- `BASE_DELAY` is reported as latency and must stay larger than `WOW_DEPTH + FLUTTER_DEPTH`
+- `BASE_DELAY` is reported as latency and must stay larger than `4 * WOW_DEPTH + 2 * FLUTTER_DEPTH` (trims at 200%)
   (`wear_wobbles_and_stays_in_the_buffer` checks it). Delay buffers are allocated in `initialize()`,
   because `reset()` can run on the audio thread.
-- `Wear` bundles the Wear amount with the Wow/Flutter/Dropouts/Hiss trims (0..1, default 1). Trims multiply their
-  part of Wear, so all-1 trims sound exactly like 0.1.0's single knob; `Wear::all(x)` is that case for tests.
+- `Wear` bundles the Wear amount (0..1) with the Wow/Flutter/Dropouts/Hiss trims (0..2, default 1). Each part runs
+  its curve on `amount * trim`, so all-1 trims sound exactly like 0.1.0's single knob; `Wear::all(x)` is that case.
 - `Coeffs::new(drive_db, colour, &wear, fs)` maps knob values to coefficients; it's shared by `process()` and
   the tests, so change the mapping there only.
 - Wear is mostly squared (wow depth, hiss) or cubed (dropout rate) so low settings stay subtle for mastering.

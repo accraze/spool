@@ -1,0 +1,16 @@
+# Changelog
+
+All notable changes to Spool are documented here. The format follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
+[Semantic Versioning](https://semver.org/).
+
+## [Unreleased]
+
+### Added
+- Tape machine model: pre-emphasised tape saturation at 4x oversampling, head bump, high-frequency
+  loss, wow and flutter, hiss and dropouts.
+- Drive, Colour, Wear and Output knobs. Drive is level-compensated, so quiet material keeps its
+  level and only the peaks get squashed.
+- Bypass on the pilot lamp, with a click-free crossfade and host bypass integration. Reports 7 ms
+  of latency (the wow/flutter delay line), and bypass stays time-aligned.
+- Hand-drawn reel-to-reel GUI with resizable window.

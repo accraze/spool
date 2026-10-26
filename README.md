@@ -17,6 +17,9 @@ your master, or push it for all-out lofi wonkiness.
 | Wow, Flutter, Dropouts, Hiss | 0–200% | Trims for each part of Wear (default 100%). A part behaves as if Wear were Wear × trim: turn one down to leave that part out, or up for more of it at low Wear. 200% goes past Wear's maximum (up to 4x the wow) |
 | Lamp    | Bypass (lit when the tape is running) |
 
+The VU meters show the output level per channel, with 0 VU at −18 dBFS RMS. The reels spin while
+your DAW is playing.
+
 Knobs: drag or scroll to turn, hold Shift for fine control, double-click to reset.
 Drag the bottom-right corner to resize the window. Spool reports 25 ms of latency for its wow and
 flutter delay line.

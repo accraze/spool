@@ -1,6 +1,7 @@
-//! Reel-to-reel style editor: a cream faceplate with two reels and four knobs, painted by hand.
+//! Reel-to-reel style editor: a cream faceplate with spinning reels, VU meters and knobs, painted
+//! by hand.
 
-use crate::SpoolParams;
+use crate::{Meters, SpoolParams};
 use nih_plug::prelude::*;
 use nih_plug_egui::egui::{
     self, emath::TSTransform, Align2, Color32, FontId, Painter, Pos2, Rect, Sense, Stroke,
@@ -20,12 +21,27 @@ const INK: Color32 = Color32::from_rgb(40, 34, 28);
 const FACEPLATE: Color32 = Color32::from_rgb(224, 214, 192);
 const TAPE: Color32 = Color32::from_rgb(70, 44, 28);
 
-pub fn create(params: Arc<SpoolParams>) -> Option<Box<dyn Editor>> {
+const REEL_RADIUS: f32 = 66.0;
+const SUPPLY_PACK: f32 = 54.0;
+const TAKEUP_PACK: f32 = 32.0;
+/// Tape speed in design pixels per second; each reel turns at this over its pack radius
+const TAPE_SPEED: f32 = 40.0;
+/// Both reels look the same every third of a turn, so the tape position wraps here without a jump
+const TAPE_WRAP: f32 = TAU / 3.0 * SUPPLY_PACK * TAKEUP_PACK;
+
+/// VU needle swing either side of straight up, in radians
+const VU_SWING: f32 = 0.7;
+const VU_MIN: f32 = -20.0;
+const VU_MAX: f32 = 3.0;
+
+pub fn create(params: Arc<SpoolParams>, meters: Arc<Meters>) -> Option<Box<dyn Editor>> {
     create_egui_editor(
         params.editor_state.clone(),
         (),
         |_, _| {},
         move |ctx, setter, _| {
+            // The meters and reels move without input, so redraw every frame
+            ctx.request_repaint();
             ResizableWindow::new("resize")
                 .min_size(DESIGN.size() / 2.0)
                 .show(ctx, &params.editor_state, |ui| {
@@ -43,14 +59,14 @@ pub fn create(params: Arc<SpoolParams>) -> Option<Box<dyn Editor>> {
                     ctx.set_transform_layer(layer, TSTransform::new(offset, scale));
                     ui.scope_builder(UiBuilder::new().layer_id(layer).max_rect(DESIGN), |ui| {
                         ui.set_clip_rect(DESIGN);
-                        deck(ui, setter, &params);
+                        deck(ui, setter, &params, &meters);
                     });
                 });
         },
     )
 }
 
-fn deck(ui: &Ui, setter: &ParamSetter, params: &SpoolParams) {
+fn deck(ui: &Ui, setter: &ParamSetter, params: &SpoolParams, meters: &Meters) {
     let body = ui.max_rect().shrink(12.0);
     let p = ui.painter();
     p.rect_filled(body, 10.0, FACEPLATE);
@@ -78,10 +94,26 @@ fn deck(ui: &Ui, setter: &ParamSetter, params: &SpoolParams) {
         Vec2::new(36.0, 18.0),
     );
     let tape = Stroke::new(2.0_f32, TAPE);
-    p.line_segment([supply + Vec2::new(0.0, 54.0), head.left_bottom()], tape);
-    p.line_segment([head.right_bottom(), takeup + Vec2::new(0.0, 32.0)], tape);
-    reel(p, supply, 54.0);
-    reel(p, takeup, 32.0);
+    p.line_segment(
+        [supply + Vec2::new(0.0, SUPPLY_PACK), head.left_bottom()],
+        tape,
+    );
+    p.line_segment(
+        [head.right_bottom(), takeup + Vec2::new(0.0, TAKEUP_PACK)],
+        tape,
+    );
+
+    // Tape position, advanced while the host plays. Tape leaves the bottom of the supply reel
+    // heading right, so both reels turn anticlockwise.
+    let travel_id = ui.id().with("tape-travel");
+    let mut travel: f32 = ui.data(|d| d.get_temp(travel_id)).unwrap_or(0.0);
+    if meters.running() {
+        let dt = ui.input(|i| i.stable_dt).min(0.1);
+        travel = (travel + TAPE_SPEED * dt) % TAPE_WRAP;
+        ui.data_mut(|d| d.insert_temp(travel_id, travel));
+    }
+    reel(p, supply, SUPPLY_PACK, -travel / SUPPLY_PACK);
+    reel(p, takeup, TAKEUP_PACK, -travel / TAKEUP_PACK);
     p.rect_filled(head, 3.0, Color32::from_gray(150));
     p.rect_stroke(
         head,
@@ -97,7 +129,7 @@ fn deck(ui: &Ui, setter: &ParamSetter, params: &SpoolParams) {
         Pos2::new(body.center().x, body.top() + 44.0),
     );
 
-    let logo = Pos2::new(body.center().x, body.top() + 200.0);
+    let logo = Pos2::new(body.left() + 112.0, body.top() + 200.0);
     // The default font has no bold weight, so fake one by overdrawing
     for offset in [
         Vec2::ZERO,
@@ -121,6 +153,12 @@ fn deck(ui: &Ui, setter: &ParamSetter, params: &SpoolParams) {
         INK,
     );
 
+    for (i, label) in ["L", "R"].into_iter().enumerate() {
+        let x = body.right() - 152.0 + 92.0 * i as f32;
+        let rect = Rect::from_center_size(Pos2::new(x, body.top() + 205.0), Vec2::new(84.0, 60.0));
+        vu_meter(p, rect, meters.vu(i), label);
+    }
+
     // Main controls, then the trims for each part of Wear underneath
     let rows = [
         (
@@ -142,8 +180,78 @@ fn deck(ui: &Ui, setter: &ParamSetter, params: &SpoolParams) {
     }
 }
 
-fn reel(p: &Painter, center: Pos2, pack: f32) {
-    const RADIUS: f32 = 66.0;
+/// Position of the needle across the scale, 0..1. VU scales are linear in voltage, not dB.
+fn vu_position(db: f32) -> f32 {
+    let gain = |db: f32| 10f32.powf(db / 20.0);
+    // Let it pin a little past +3 like a real meter
+    ((gain(db) - gain(VU_MIN)) / (gain(VU_MAX) - gain(VU_MIN))).clamp(0.0, 1.05)
+}
+
+fn vu_meter(p: &Painter, rect: Rect, db: f32, label: &str) {
+    p.rect_filled(rect, 4.0, Color32::from_rgb(238, 222, 160));
+    // The pivot sits below the face, so the needle only shows its upper part
+    let pivot = Pos2::new(rect.center().x, rect.bottom() + 8.0);
+    let at = |db: f32, r: f32| pivot + dir(-VU_SWING + 2.0 * VU_SWING * vu_position(db)) * r;
+    let red = Color32::from_rgb(190, 40, 30);
+
+    let arc = |from: f32, to: f32| -> Vec<Pos2> {
+        (0..=16)
+            .map(|i| at(from + (to - from) * i as f32 / 16.0, 48.0))
+            .collect()
+    };
+    p.add(egui::Shape::line(
+        arc(VU_MIN, 0.0),
+        Stroke::new(1.0_f32, INK),
+    ));
+    p.add(egui::Shape::line(
+        arc(0.0, VU_MAX),
+        Stroke::new(3.0_f32, red),
+    ));
+    for tick in [-20.0, -10.0, -7.0, -5.0, -3.0, -1.0, 0.0, 1.0, 2.0, 3.0] {
+        let color = if tick > 0.0 { red } else { INK };
+        p.line_segment(
+            [at(tick, 48.0), at(tick, 53.0)],
+            Stroke::new(1.0_f32, color),
+        );
+    }
+    for (tick, text) in [
+        (-20.0, "20"),
+        (-10.0, "10"),
+        (-5.0, "5"),
+        (0.0, "0"),
+        (3.0, "+3"),
+    ] {
+        p.text(
+            at(tick, 58.0),
+            Align2::CENTER_CENTER,
+            text,
+            FontId::proportional(7.0),
+            if tick > 0.0 { red } else { INK },
+        );
+    }
+    p.text(
+        rect.left_bottom() + Vec2::new(6.0, -4.0),
+        Align2::LEFT_BOTTOM,
+        format!("VU {label}"),
+        FontId::proportional(8.0),
+        INK,
+    );
+
+    p.with_clip_rect(rect).line_segment(
+        [pivot, at(db, 54.0)],
+        Stroke::new(1.2_f32, Color32::from_gray(20)),
+    );
+    p.rect_stroke(
+        rect,
+        4.0,
+        Stroke::new(2.0_f32, Color32::from_gray(70)),
+        StrokeKind::Outside,
+    );
+}
+
+/// `angle` turns the reel, clockwise in radians.
+fn reel(p: &Painter, center: Pos2, pack: f32, angle: f32) {
+    const RADIUS: f32 = REEL_RADIUS;
     p.circle_filled(
         center + Vec2::new(0.0, 3.0),
         RADIUS,
@@ -158,7 +266,7 @@ fn reel(p: &Painter, center: Pos2, pack: f32) {
     p.circle_filled(center, pack, TAPE);
     // Three windows in the flange
     for i in 0..3 {
-        let a = i as f32 * TAU / 3.0;
+        let a = angle + i as f32 * TAU / 3.0;
         let window: Vec<Pos2> = (0..=12)
             .map(|j| a - 0.45 + 0.9 * j as f32 / 12.0)
             .flat_map(|b| [(b, RADIUS - 8.0), (b, 22.0)])
@@ -176,7 +284,7 @@ fn reel(p: &Painter, center: Pos2, pack: f32) {
     p.circle_filled(center, 16.0, Color32::from_gray(210));
     p.circle_stroke(center, 16.0, Stroke::new(1.0_f32, Color32::from_gray(110)));
     for i in 0..3 {
-        let a = i as f32 * TAU / 3.0;
+        let a = angle + i as f32 * TAU / 3.0;
         p.line_segment(
             [center + dir(a) * 4.0, center + dir(a) * 12.0],
             Stroke::new(2.5_f32, Color32::from_gray(90)),

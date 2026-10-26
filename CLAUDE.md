@@ -34,8 +34,12 @@ cargo clippy --release --lib
   the tests, so change the mapping there only.
 - Wear is mostly squared (wow depth, hiss) or cubed (dropout rate) so low settings stay subtle for mastering.
 - GUI lives in `src/editor.rs`: a hand-painted reel-to-reel faceplate. `knob()`, `screw()` and window scaling
-  come from Rodent (see `../rodent/CLAUDE.md`). The pilot lamp is the bypass button. Reels are static.
+  come from Rodent (see `../rodent/CLAUDE.md`). The pilot lamp is the bypass button.
   `knob()` takes a radius: 28 for the main row, 18 for the Wear trims row.
+- `Meters` (in `lib.rs`, an `Arc` shared with the editor) carries each channel's mean-square output as `AtomicU32` bits
+  and whether the reels should run (host playing and not bypassed). `process()` only stores them while the editor is
+  open. The editor redraws every frame, keeps the tape position in egui memory and turns each reel by
+  `travel / pack radius`, wrapping at `TAPE_WRAP` so the angle never jumps. VU needles map linear voltage, not dB.
 - README screenshot: same standalone recipe as `../wailer/CLAUDE.md` (match the `"Spool": ()` window).
 - The audio thread must not allocate (`assert_process_allocs` is enabled).
 - `CLAP_ID` and `VST3_CLASS_ID` must never change, or saved Bitwig projects lose the plugin.

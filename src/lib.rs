@@ -12,6 +12,7 @@
 use nih_plug::prelude::*;
 use nih_plug_egui::EguiState;
 use std::f32::consts::{PI, TAU};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 
 mod editor;
@@ -48,6 +49,10 @@ const HF_DARK: f32 = 5e3;
 const HF_WORN: f32 = 0.4;
 /// Hiss level at full wear, -40 dB
 const HISS: f32 = 0.01;
+
+// VU meter: averaging time constant (a one-pole close to the 300 ms VU rise) and 0 VU in dBFS RMS
+const VU_TAU: f32 = 0.065;
+const VU_REF_DB: f32 = -18.0;
 
 /// Bypass crossfade time in seconds, long enough to avoid clicks
 const BYPASS_FADE: f32 = 0.01;
@@ -348,8 +353,35 @@ impl Channel {
     }
 }
 
+/// Output levels and transport state handed from the audio thread to the editor.
+#[derive(Default)]
+struct Meters {
+    /// Mean square output per channel, as `f32` bits
+    levels: [AtomicU32; 2],
+    /// Host transport playing and not bypassed, so the reels turn
+    running: AtomicBool,
+}
+
+impl Meters {
+    /// VU reading of a channel in dB
+    fn vu(&self, channel: usize) -> f32 {
+        vu_db(f32::from_bits(self.levels[channel].load(Ordering::Relaxed)))
+    }
+
+    fn running(&self) -> bool {
+        self.running.load(Ordering::Relaxed)
+    }
+}
+
+fn vu_db(mean_square: f32) -> f32 {
+    10.0 * mean_square.max(1e-12).log10() - VU_REF_DB
+}
+
 struct Spool {
     params: Arc<SpoolParams>,
+    meters: Arc<Meters>,
+    /// Running mean square of each output channel
+    vu: [f32; 2],
     sample_rate: f32,
     /// Base delay in whole samples, so the dry read is exact
     base_delay: usize,
@@ -445,6 +477,8 @@ impl Default for Spool {
     fn default() -> Self {
         Self {
             params: Arc::new(SpoolParams::default()),
+            meters: Arc::default(),
+            vu: [0.0; 2],
             sample_rate: 48000.0,
             base_delay: 0,
             transport: Transport::default(),
@@ -484,7 +518,7 @@ impl Plugin for Spool {
     }
 
     fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
-        editor::create(self.params.clone())
+        editor::create(self.params.clone(), self.meters.clone())
     }
 
     fn initialize(
@@ -515,6 +549,7 @@ impl Plugin for Spool {
             ch.delay.buf.fill(0.0);
         }
         self.transport = Transport::default();
+        self.vu = [0.0; 2];
         self.wet = if self.params.bypass.value() { 0.0 } else { 1.0 };
     }
 
@@ -522,9 +557,10 @@ impl Plugin for Spool {
         &mut self,
         buffer: &mut Buffer,
         _aux: &mut AuxiliaryBuffers,
-        _context: &mut impl ProcessContext<Self>,
+        context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
         let fs = self.sample_rate;
+        let vu_k = 1.0 - (-1.0 / (VU_TAU * fs)).exp();
         let base = self.base_delay as f32;
         let fade_step = 1.0 / (BYPASS_FADE * fs);
 
@@ -548,14 +584,29 @@ impl Plugin for Spool {
             self.wet += (target - self.wet).clamp(-fade_step, fade_step);
 
             // Keep processing while bypassed so the tape path stays warm for a click-free return
-            for (sample, channel) in frame.iter_mut().zip(self.channels.iter_mut()) {
+            for ((sample, channel), vu) in frame
+                .iter_mut()
+                .zip(self.channels.iter_mut())
+                .zip(self.vu.iter_mut())
+            {
                 channel.delay.push(*sample);
                 let dry = channel.delay.read(base);
                 let tape = channel.delay.read(delay);
                 let noise = self.transport.noise();
                 let wet = channel.process(tape, &coeffs, noise) * dropout * output;
                 *sample = dry + (wet - dry) * self.wet;
+                *vu += (*sample * *sample - *vu) * vu_k;
             }
+        }
+
+        if self.params.editor_state.is_open() {
+            // Mono shows the one channel on both meters
+            let right = if buffer.channels() > 1 { 1 } else { 0 };
+            for (meter, ch) in self.meters.levels.iter().zip([0, right]) {
+                meter.store(self.vu[ch].to_bits(), Ordering::Relaxed);
+            }
+            let running = context.transport().playing && !self.params.bypass.value();
+            self.meters.running.store(running, Ordering::Relaxed);
         }
 
         ProcessStatus::Normal
@@ -734,6 +785,19 @@ mod tests {
         // Never closer than 1 sample or past the buffer's 2 * base
         assert!(hi - lo > 0.016 * fs, "swing {lo}..{hi}");
         assert!(lo >= 1.0 && hi + 2.0 < 2.0 * base, "swing {lo}..{hi}");
+    }
+
+    #[test]
+    fn vu_reads_zero_at_reference_level() {
+        // A sine at -18 dBFS RMS, averaged like process() does
+        let fs = 48000.0;
+        let amp = util::db_to_gain(VU_REF_DB) * 2f32.sqrt();
+        let k = 1.0 - (-1.0 / (VU_TAU * fs)).exp();
+        let ms = (0..fs as usize).fold(0.0, |ms, i| {
+            let x = amp * (2.0 * PI * 1000.0 * i as f32 / fs).sin();
+            ms + (x * x - ms) * k
+        });
+        assert!(vu_db(ms).abs() < 0.2, "{} VU", vu_db(ms));
     }
 
     #[test]

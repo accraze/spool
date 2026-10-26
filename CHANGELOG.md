@@ -6,6 +6,12 @@ All notable changes to Spool are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- VU meters for the left and right output, calibrated to 0 VU = −18 dBFS RMS. A mono instance
+  shows its one channel on both.
+- The reels spin while the host is playing (and stop when Spool is bypassed), the near-empty
+  take-up reel faster than the full supply reel.
+
 ## [0.2.0] - 2026-10-26
 
 ### Added

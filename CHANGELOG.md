@@ -6,6 +6,8 @@ All notable changes to Spool are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-26
+
 ### Added
 - Tape machine model: pre-emphasised tape saturation at 4x oversampling, head bump, high-frequency
   loss, wow and flutter, hiss and dropouts.
@@ -14,3 +16,6 @@ All notable changes to Spool are documented here. The format follows
 - Bypass on the pilot lamp, with a click-free crossfade and host bypass integration. Reports 7 ms
   of latency (the wow/flutter delay line), and bypass stays time-aligned.
 - Hand-drawn reel-to-reel GUI with resizable window.
+
+[Unreleased]: https://github.com/accraze/spool/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/accraze/spool/releases/tag/v0.1.0

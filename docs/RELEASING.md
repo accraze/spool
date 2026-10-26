@@ -32,7 +32,7 @@ Nothing is built or uploaded from a local machine.
 ### Release notes
 
 First line is the title (`Spool vX.Y.Z`), then a one-line summary, then the version's
-`CHANGELOG.md` entries, then an Install section. See `git tag -n99 v0.1.0` (once it exists) for the shape.
+`CHANGELOG.md` entries, then an Install section. See `git tag -n99 v0.1.0` for the shape.
 
 ## What CI does on a tag
 

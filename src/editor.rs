@@ -1,7 +1,7 @@
 //! Reel-to-reel style editor: a cream faceplate with spinning reels, VU meters and knobs, painted
 //! by hand.
 
-use crate::{Meters, SpoolParams};
+use crate::{Meters, Preset, SpoolParams, PRESETS};
 use nih_plug::prelude::*;
 use nih_plug_egui::egui::{
     self, emath::TSTransform, Align2, Color32, FontId, Painter, Pos2, Rect, Sense, Stroke,
@@ -151,6 +151,13 @@ fn deck(ui: &Ui, setter: &ParamSetter, params: &SpoolParams, meters: &Meters) {
         "T A P E   M A C H I N E",
         FontId::proportional(11.0),
         INK,
+    );
+
+    preset_selector(
+        ui,
+        setter,
+        params,
+        Pos2::new(body.center().x, body.top() + 108.0),
     );
 
     for (i, label) in ["L", "R"].into_iter().enumerate() {
@@ -415,6 +422,118 @@ fn knob(ui: &Ui, setter: &ParamSetter, param: &FloatParam, center: Pos2, radius:
     }
 }
 
+/// The preset's values for each float param, in plain units.
+fn preset_values<'a>(params: &'a SpoolParams, p: &Preset) -> [(&'a FloatParam, f32); 8] {
+    [
+        (&params.drive, p.drive_db),
+        (&params.colour, p.colour),
+        (&params.wear, p.wear),
+        (&params.output, util::db_to_gain(p.output_db)),
+        (&params.wow, p.wow),
+        (&params.flutter, p.flutter),
+        (&params.dropouts, p.dropouts),
+        (&params.hiss, p.hiss),
+    ]
+}
+
+/// Index of the preset the current (unmodulated) settings match, if any.
+fn matching_preset(params: &SpoolParams) -> Option<usize> {
+    PRESETS.iter().position(|p| {
+        // Compare normalized values so dB and percentage params share one tolerance
+        preset_values(params, p).into_iter().all(|(param, value)| {
+            (param.unmodulated_normalized_value() - param.preview_normalized(value)).abs() < 1e-3
+        })
+    })
+}
+
+fn apply_preset(setter: &ParamSetter, params: &SpoolParams, preset: &Preset) {
+    for (param, value) in preset_values(params, preset) {
+        setter.begin_set_parameter(param);
+        setter.set_parameter(param, value);
+        setter.end_set_parameter(param);
+    }
+}
+
+/// `‹ NAME ›` selector. Shows "CUSTOM" once the knobs no longer match a preset.
+fn preset_selector(ui: &Ui, setter: &ParamSetter, params: &SpoolParams, center: Pos2) {
+    let slot = Rect::from_center_size(center, Vec2::new(84.0, 16.0));
+    let arrow_size = Vec2::new(16.0, slot.height());
+    let prev_rect = Rect::from_min_size(slot.left_top(), arrow_size);
+    let next_rect =
+        Rect::from_min_size(slot.right_top() - Vec2::new(arrow_size.x, 0.0), arrow_size);
+    let prev = ui.interact(
+        prev_rect.expand(4.0),
+        ui.id().with("preset-prev"),
+        Sense::click(),
+    );
+    let next = ui.interact(
+        next_rect.expand(4.0),
+        ui.id().with("preset-next"),
+        Sense::click(),
+    );
+
+    let current = matching_preset(params);
+    // Remember the last pick so stepping from CUSTOM continues from where you were
+    let memory_id = ui.id().with("preset-last");
+    let last = current.or_else(|| ui.data(|d| d.get_temp::<usize>(memory_id)));
+    let n = PRESETS.len();
+    let step = if prev.clicked() {
+        Some(last.map_or(n - 1, |i| (i + n - 1) % n))
+    } else if next.clicked() {
+        Some(last.map_or(0, |i| (i + 1) % n))
+    } else {
+        None
+    };
+    if let Some(i) = step {
+        apply_preset(setter, params, &PRESETS[i]);
+        ui.data_mut(|d| d.insert_temp(memory_id, i));
+    }
+
+    let p = ui.painter();
+    p.rect_filled(slot, 7.0, Color32::from_gray(30));
+    p.rect_stroke(
+        slot,
+        7.0,
+        Stroke::new(1.0_f32, Color32::from_gray(90)),
+        StrokeKind::Outside,
+    );
+    for (rect, response, flip) in [(prev_rect, &prev, -1.0), (next_rect, &next, 1.0)] {
+        let c = rect.center();
+        let color = if response.hovered() {
+            FACEPLATE
+        } else {
+            Color32::from_gray(150)
+        };
+        let triangle = vec![
+            c + Vec2::new(3.0 * flip, 0.0),
+            c + Vec2::new(-2.0 * flip, -4.0),
+            c + Vec2::new(-2.0 * flip, 4.0),
+        ];
+        p.add(egui::Shape::convex_polygon(triangle, color, Stroke::NONE));
+    }
+    let (name, color) = match current {
+        Some(i) => (
+            PRESETS[i].name.to_uppercase(),
+            Color32::from_rgb(255, 190, 90),
+        ),
+        None => ("CUSTOM".to_string(), Color32::from_gray(150)),
+    };
+    p.text(
+        slot.center(),
+        Align2::CENTER_CENTER,
+        name,
+        FontId::proportional(10.0),
+        color,
+    );
+    p.text(
+        Pos2::new(center.x, slot.bottom() + 4.0),
+        Align2::CENTER_TOP,
+        "TAPE",
+        FontId::proportional(9.0),
+        INK,
+    );
+}
+
 /// Amber pilot lamp that doubles as the bypass button: lit means the tape is running.
 fn lamp(ui: &Ui, setter: &ParamSetter, bypass: &BoolParam, center: Pos2) {
     let rect = Rect::from_center_size(center, Vec2::splat(30.0));
@@ -459,4 +578,27 @@ fn screw(p: &Painter, center: Pos2) {
         [center - dir(0.6) * 4.0, center + dir(0.6) * 4.0],
         Stroke::new(1.5_f32, Color32::from_gray(80)),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn presets_fit_the_params_and_default_matches_the_first() {
+        let params = SpoolParams::default();
+        assert_eq!(matching_preset(&params), Some(0));
+        for p in PRESETS {
+            for (param, value) in preset_values(&params, p) {
+                // Out-of-range values would be clamped on apply and never match again
+                let range = param.preview_plain(0.0)..=param.preview_plain(1.0);
+                assert!(
+                    range.contains(&value),
+                    "{} {}: {value}",
+                    p.name,
+                    param.name()
+                );
+            }
+        }
+    }
 }

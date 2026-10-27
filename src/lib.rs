@@ -57,6 +57,52 @@ const VU_REF_DB: f32 = -18.0;
 /// Bypass crossfade time in seconds, long enough to avoid clicks
 const BYPASS_FADE: f32 = 0.01;
 
+/// Factory preset: a tape type expressed in the knobs. Bypass isn't part of a preset.
+struct Preset {
+    name: &'static str,
+    drive_db: f32,
+    colour: f32,
+    wear: f32,
+    output_db: f32,
+    wow: f32,
+    flutter: f32,
+    dropouts: f32,
+    hiss: f32,
+}
+
+/// Cleanest to dirtiest. The first must equal the param defaults (`first_preset_is_the_default`),
+/// and output levels are matched to it (`presets_are_level_matched`).
+#[rustfmt::skip]
+const PRESETS: &[Preset] = &[
+    // Studio reel at 15 ips: a little glue and warmth, nearly no transport noise
+    Preset { name: "15 IPS",  drive_db:  3.0, colour: 0.30, wear: 0.10, output_db: 0.0, wow: 1.0, flutter: 1.0, dropouts: 1.0, hiss: 1.0 },
+    // 30 ips: wider bandwidth, less bump, quieter and steadier
+    Preset { name: "30 IPS",  drive_db:  2.0, colour: 0.15, wear: 0.05, output_db: 0.0, wow: 0.5, flutter: 0.5, dropouts: 0.0, hiss: 0.5 },
+    // Type IV cassette: takes level well, stays bright
+    Preset { name: "Metal",   drive_db:  8.0, colour: 0.25, wear: 0.20, output_db: 2.0, wow: 0.8, flutter: 1.0, dropouts: 0.2, hiss: 0.6 },
+    // Type II cassette: bright with low hiss
+    Preset { name: "Chrome",  drive_db:  6.0, colour: 0.40, wear: 0.25, output_db: 1.0, wow: 0.8, flutter: 1.0, dropouts: 0.3, hiss: 0.8 },
+    // Type I cassette: darker, saturates earlier, hissier
+    Preset { name: "Ferric",  drive_db:  9.0, colour: 0.60, wear: 0.35, output_db: 2.5, wow: 1.0, flutter: 1.2, dropouts: 0.5, hiss: 1.3 },
+    // Old, well-played tape: dull, wobbly, the odd dropout
+    Preset { name: "Vintage", drive_db: 10.0, colour: 0.75, wear: 0.60, output_db: 4.0, wow: 1.2, flutter: 1.0, dropouts: 1.0, hiss: 1.0 },
+    // Long-play VHS hi-fi gone wrong: murky, warbling, dropping out
+    Preset { name: "VHS",     drive_db: 12.0, colour: 0.90, wear: 0.70, output_db: 5.5, wow: 1.6, flutter: 1.5, dropouts: 1.3, hiss: 1.4 },
+];
+
+impl Preset {
+    #[cfg(test)]
+    fn wear(&self) -> Wear {
+        Wear {
+            amount: self.wear,
+            wow: self.wow,
+            flutter: self.flutter,
+            dropouts: self.dropouts,
+            hiss: self.hiss,
+        }
+    }
+}
+
 /// Topology-preserving one-pole filter, gives both low-pass and high-pass outputs.
 #[derive(Default, Clone, Copy)]
 struct OnePole {
@@ -650,6 +696,19 @@ mod tests {
     }
 
     fn render_worn(drive: f32, colour: f32, wear: Wear, fs: f32, freq: f32, amp: f32) -> Vec<f32> {
+        render_signal(drive, colour, wear, fs, |t| {
+            amp * (2.0 * PI * freq * t).sin()
+        })
+    }
+
+    /// Like `render`, for any input signal given as a function of time in seconds.
+    fn render_signal(
+        drive: f32,
+        colour: f32,
+        wear: Wear,
+        fs: f32,
+        signal: impl Fn(f32) -> f32,
+    ) -> Vec<f32> {
         let base = (BASE_DELAY * fs).round() as usize;
         let c = Coeffs::new(drive, colour, &wear, fs);
         let mut ch = Channel::new(fs, base);
@@ -658,7 +717,7 @@ mod tests {
         (0..n)
             .map(|i| {
                 let (delay, dropout) = tr.next(&wear, base as f32, fs);
-                ch.delay.push(amp * (2.0 * PI * freq * i as f32 / fs).sin());
+                ch.delay.push(signal(i as f32 / fs));
                 let tape = ch.delay.read(delay);
                 ch.process(tape, &c, tr.noise()) * dropout
             })
@@ -785,6 +844,55 @@ mod tests {
         // Never closer than 1 sample or past the buffer's 2 * base
         assert!(hi - lo > 0.016 * fs, "swing {lo}..{hi}");
         assert!(lo >= 1.0 && hi + 2.0 < 2.0 * base, "swing {lo}..{hi}");
+    }
+
+    #[test]
+    fn first_preset_is_the_default() {
+        let (p, d) = (&PRESETS[0], SpoolParams::default());
+        assert_eq!(p.drive_db, d.drive.default_plain_value());
+        assert_eq!(
+            util::db_to_gain(p.output_db),
+            d.output.default_plain_value()
+        );
+        for (preset, param) in [
+            (p.colour, &d.colour),
+            (p.wear, &d.wear),
+            (p.wow, &d.wow),
+            (p.flutter, &d.flutter),
+            (p.dropouts, &d.dropouts),
+            (p.hiss, &d.hiss),
+        ] {
+            assert_eq!(preset, param.default_plain_value(), "{}", param.name());
+        }
+    }
+
+    #[test]
+    fn presets_are_level_matched() {
+        // Three tones standing in for a mix, about -13 dBFS RMS, hot enough to hit the saturation
+        let mix = |t: f32| {
+            [100.0, 1000.0, 5000.0]
+                .iter()
+                .map(|f| 0.15 * (2.0 * PI * f * t).sin())
+                .sum::<f32>()
+        };
+        let level = |p: &Preset| {
+            let out = render_signal(p.drive_db, p.colour, p.wear(), 48000.0, mix);
+            util::gain_to_db(rms(&out)) + p.output_db
+        };
+        // Print every offset before failing, so all the output levels can be fixed in one go
+        let reference = level(&PRESETS[0]);
+        let diffs: Vec<f32> = PRESETS.iter().map(|p| level(p) - reference).collect();
+        for (p, diff) in PRESETS.iter().zip(&diffs) {
+            println!("{:8} {diff:+.2} dB", p.name);
+        }
+        for (p, diff) in PRESETS.iter().zip(diffs) {
+            assert!(
+                diff.abs() < 1.0,
+                "{} is {diff:+.1} dB vs {}",
+                p.name,
+                PRESETS[0].name
+            );
+        }
     }
 
     #[test]

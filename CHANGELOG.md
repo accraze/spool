@@ -6,6 +6,12 @@ All notable changes to Spool are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- Tape presets: 15 IPS, 30 IPS, Metal, Chrome, Ferric, Vintage and VHS, from cleanest to
+  dirtiest. Step through them with the ‹ › selector between the reels. They set every knob, are
+  level-matched to within 0.2 dB, and the selector shows CUSTOM once you tweak. 15 IPS is the
+  default.
+
 ## [0.3.0] - 2026-10-26
 
 ### Added

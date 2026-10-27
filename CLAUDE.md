@@ -36,6 +36,10 @@ cargo clippy --release --lib
 - GUI lives in `src/editor.rs`: a hand-painted reel-to-reel faceplate. `knob()`, `screw()` and window scaling
   come from Rodent (see `../rodent/CLAUDE.md`). The pilot lamp is the bypass button.
   `knob()` takes a radius: 28 for the main row, 18 for the Wear trims row.
+- `PRESETS` in `lib.rs` are tape types expressed in the knobs (cleanest first). The first must equal the param
+  defaults (`first_preset_is_the_default`); `output_db` is level-matched to it by `presets_are_level_matched`
+  (`--nocapture` prints every offset), so re-run it after edits. The selector's matching and applying both go
+  through `preset_values()` in `editor.rs`, so add new params there too.
 - `Meters` (in `lib.rs`, an `Arc` shared with the editor) carries each channel's mean-square output as `AtomicU32` bits
   and whether the reels should run (host playing and not bypassed). `process()` only stores them while the editor is
   open. The editor redraws every frame, keeps the tape position in egui memory and turns each reel by

@@ -6,6 +6,8 @@ All notable changes to Spool are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-26
+
 ### Added
 - VU meters for the left and right output, calibrated to 0 VU = −18 dBFS RMS. A mono instance
   shows its one channel on both.
@@ -35,6 +37,7 @@ All notable changes to Spool are documented here. The format follows
   of latency (the wow/flutter delay line), and bypass stays time-aligned.
 - Hand-drawn reel-to-reel GUI with resizable window.
 
-[Unreleased]: https://github.com/accraze/spool/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/accraze/spool/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/accraze/spool/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/accraze/spool/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/accraze/spool/releases/tag/v0.1.0

@@ -6,6 +6,8 @@ All notable changes to Spool are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-10-28
+
 ### Changed
 - The tape selector moved above the pilot lamp, where it has room to breathe instead of crowding
   the reels.
@@ -57,7 +59,8 @@ All notable changes to Spool are documented here. The format follows
   of latency (the wow/flutter delay line), and bypass stays time-aligned.
 - Hand-drawn reel-to-reel GUI with resizable window.
 
-[Unreleased]: https://github.com/accraze/spool/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/accraze/spool/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/accraze/spool/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/accraze/spool/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/accraze/spool/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/accraze/spool/compare/v0.2.0...v0.3.0

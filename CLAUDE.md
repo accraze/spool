@@ -30,12 +30,17 @@ cargo clippy --release --lib
   because `reset()` can run on the audio thread.
 - `Wear` bundles the Wear amount (0..1) with the Wow/Flutter/Dropouts/Hiss trims (0..2, default 1). Each part runs
   its curve on `amount * trim`, so all-1 trims sound exactly like 0.1.0's single knob; `Wear::all(x)` is that case.
+- Elastic (in `Wear`, run by `Transport::next`) warps the wow phase so it rises over `skew` of the cycle and falls over
+  the rest, then blends in the same curve through a resonant `Svf` "tape spring". The spring always runs so Elastic
+  can move without jumps; `SPRING_IN` keeps its overshoot inside the wow depth (`spring_rarely_hits_the_wow_limit`).
+- Mix blends dry (time-aligned at the base delay) with tape, multiplied with the bypass crossfade. It isn't part of
+  presets, like bypass.
 - `Coeffs::new(drive_db, colour, &wear, fs)` maps knob values to coefficients; it's shared by `process()` and
   the tests, so change the mapping there only.
 - Wear is mostly squared (wow depth, hiss) or cubed (dropout rate) so low settings stay subtle for mastering.
 - GUI lives in `src/editor.rs`: a hand-painted reel-to-reel faceplate. `knob()`, `screw()` and window scaling
   come from Rodent (see `../rodent/CLAUDE.md`). The pilot lamp is the bypass button.
-  `knob()` takes a radius: 28 for the main row, 18 for the Wear trims row.
+  `knob()` takes a radius: 26 for the main row, 18 for the Wear trims row.
 - `PRESETS` in `lib.rs` are tape types expressed in the knobs (cleanest first). The first must equal the param
   defaults (`first_preset_is_the_default`); `output_db` is level-matched to it by `presets_are_level_matched`
   (`--nocapture` prints every offset), so re-run it after edits. The selector's matching and applying both go

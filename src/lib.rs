@@ -25,6 +25,12 @@ const BASE_DELAY: f32 = 0.025;
 const WOW_DEPTH: f32 = 0.006;
 const WOW_RATE: f32 = 0.5;
 const DRIFT_FC: f32 = 0.3;
+// Elastic: the wow sags for up to ELASTIC_SKEW of its cycle (0.5 is a sine) and snaps back
+// through a resonant "tape spring", scaled down so its overshoot stays within the wow depth
+const ELASTIC_SKEW: f32 = 0.85;
+const SPRING_FC: f32 = 4.0;
+const SPRING_Q: f32 = 2.0;
+const SPRING_IN: f32 = 0.75;
 const FLUTTER_DEPTH: f32 = 0.00015;
 const FLUTTER_RATE: f32 = 7.0;
 /// Dropouts per second at full wear
@@ -68,6 +74,7 @@ struct Preset {
     flutter: f32,
     dropouts: f32,
     hiss: f32,
+    elastic: f32,
 }
 
 /// Cleanest to dirtiest. The first must equal the param defaults (`first_preset_is_the_default`),
@@ -75,19 +82,19 @@ struct Preset {
 #[rustfmt::skip]
 const PRESETS: &[Preset] = &[
     // Studio reel at 15 ips: a little glue and warmth, nearly no transport noise
-    Preset { name: "15 IPS",  drive_db:  3.0, colour: 0.30, wear: 0.10, output_db: 0.0, wow: 1.0, flutter: 1.0, dropouts: 1.0, hiss: 1.0 },
+    Preset { name: "15 IPS",  drive_db:  3.0, colour: 0.30, wear: 0.10, output_db: 0.0, wow: 1.0, flutter: 1.0, dropouts: 1.0, hiss: 1.0, elastic: 0.0 },
     // 30 ips: wider bandwidth, less bump, quieter and steadier
-    Preset { name: "30 IPS",  drive_db:  2.0, colour: 0.15, wear: 0.05, output_db: 0.0, wow: 0.5, flutter: 0.5, dropouts: 0.0, hiss: 0.5 },
+    Preset { name: "30 IPS",  drive_db:  2.0, colour: 0.15, wear: 0.05, output_db: 0.0, wow: 0.5, flutter: 0.5, dropouts: 0.0, hiss: 0.5, elastic: 0.0 },
     // Type IV cassette: takes level well, stays bright
-    Preset { name: "Metal",   drive_db:  8.0, colour: 0.25, wear: 0.20, output_db: 2.0, wow: 0.8, flutter: 1.0, dropouts: 0.2, hiss: 0.6 },
+    Preset { name: "Metal",   drive_db:  8.0, colour: 0.25, wear: 0.20, output_db: 2.0, wow: 0.8, flutter: 1.0, dropouts: 0.2, hiss: 0.6, elastic: 0.0 },
     // Type II cassette: bright with low hiss
-    Preset { name: "Chrome",  drive_db:  6.0, colour: 0.40, wear: 0.25, output_db: 1.0, wow: 0.8, flutter: 1.0, dropouts: 0.3, hiss: 0.8 },
+    Preset { name: "Chrome",  drive_db:  6.0, colour: 0.40, wear: 0.25, output_db: 1.0, wow: 0.8, flutter: 1.0, dropouts: 0.3, hiss: 0.8, elastic: 0.0 },
     // Type I cassette: darker, saturates earlier, hissier
-    Preset { name: "Ferric",  drive_db:  9.0, colour: 0.60, wear: 0.35, output_db: 2.5, wow: 1.0, flutter: 1.2, dropouts: 0.5, hiss: 1.3 },
+    Preset { name: "Ferric",  drive_db:  9.0, colour: 0.60, wear: 0.35, output_db: 2.5, wow: 1.0, flutter: 1.2, dropouts: 0.5, hiss: 1.3, elastic: 0.0 },
     // Old, well-played tape: dull, wobbly, the odd dropout
-    Preset { name: "Vintage", drive_db: 10.0, colour: 0.75, wear: 0.60, output_db: 4.0, wow: 1.2, flutter: 1.0, dropouts: 1.0, hiss: 1.0 },
+    Preset { name: "Vintage", drive_db: 10.0, colour: 0.75, wear: 0.60, output_db: 4.0, wow: 1.2, flutter: 1.0, dropouts: 1.0, hiss: 1.0, elastic: 0.0 },
     // Long-play VHS hi-fi gone wrong: murky, warbling, dropping out
-    Preset { name: "VHS",     drive_db: 12.0, colour: 0.90, wear: 0.70, output_db: 5.5, wow: 1.6, flutter: 1.5, dropouts: 1.3, hiss: 1.4 },
+    Preset { name: "VHS",     drive_db: 12.0, colour: 0.90, wear: 0.70, output_db: 5.5, wow: 1.6, flutter: 1.5, dropouts: 1.3, hiss: 1.4, elastic: 0.0 },
 ];
 
 impl Preset {
@@ -99,7 +106,29 @@ impl Preset {
             flutter: self.flutter,
             dropouts: self.dropouts,
             hiss: self.hiss,
+            elastic: self.elastic,
         }
+    }
+}
+
+/// Topology-preserving state variable filter, low-pass output only.
+#[derive(Default, Clone, Copy)]
+struct Svf {
+    ic1: f32,
+    ic2: f32,
+}
+
+impl Svf {
+    /// `g` is `tan(pi * fc / fs)`, `q` the resonance.
+    fn lp(&mut self, x: f32, g: f32, q: f32) -> f32 {
+        let a1 = 1.0 / (1.0 + g * (g + 1.0 / q));
+        let (a2, a3) = (g * a1, g * g * a1);
+        let v3 = x - self.ic2;
+        let v1 = a1 * self.ic1 + a2 * v3;
+        let v2 = self.ic2 + a2 * self.ic1 + a3 * v3;
+        self.ic1 = 2.0 * v1 - self.ic1;
+        self.ic2 = 2.0 * v2 - self.ic2;
+        v2
     }
 }
 
@@ -243,6 +272,8 @@ struct Wear {
     flutter: f32,
     dropouts: f32,
     hiss: f32,
+    /// 0..1, how much the wow sags, snaps and bounces
+    elastic: f32,
 }
 
 impl Wear {
@@ -255,6 +286,7 @@ impl Wear {
             flutter: 1.0,
             dropouts: 1.0,
             hiss: 1.0,
+            elastic: 0.0,
         }
     }
 }
@@ -264,6 +296,7 @@ struct Transport {
     wow_phase: f32,
     flutter_phase: f32,
     drift: OnePole,
+    spring: Svf,
     dropout_left: usize,
     dropout_target: f32,
     dropout_gain: f32,
@@ -276,6 +309,7 @@ impl Default for Transport {
             wow_phase: 0.0,
             flutter_phase: 0.0,
             drift: OnePole::default(),
+            spring: Svf::default(),
             dropout_left: 0,
             dropout_target: 1.0,
             dropout_gain: 1.0,
@@ -302,7 +336,21 @@ impl Transport {
         let g = prewarp(DRIFT_FC, fs);
         let noise = self.noise();
         let drift = (self.drift.lp(noise, g) * (1.5 / g).sqrt()).clamp(-1.0, 1.0);
-        let wow = 0.7 * self.wow_phase.sin() + 0.3 * drift;
+        // Warp the phase so the cycle rises over `skew` of it and falls over the rest. At 0.5
+        // this is a plain sine; past it the tape sags slowly and snaps back.
+        let skew = 0.5 + (ELASTIC_SKEW - 0.5) * w.elastic;
+        let p = self.wow_phase / TAU;
+        let warped = if p < skew {
+            PI * p / skew
+        } else {
+            PI + PI * (p - skew) / (1.0 - skew)
+        };
+        let wow = 0.7 * -warped.cos() + 0.3 * drift;
+        // The spring always runs so turning Elastic up mid-note doesn't jump
+        let sprung = self
+            .spring
+            .lp(wow * SPRING_IN, prewarp(SPRING_FC, fs), SPRING_Q);
+        let wow = (wow + (sprung - wow) * w.elastic).clamp(-1.0, 1.0);
         let (wow_amount, flutter_amount) = (w.amount * w.wow, w.amount * w.flutter);
         let delay = base
             + wow_amount * wow_amount * WOW_DEPTH * fs * wow
@@ -457,6 +505,10 @@ struct SpoolParams {
     dropouts: FloatParam,
     #[id = "hiss"]
     hiss: FloatParam,
+    #[id = "elastic"]
+    elastic: FloatParam,
+    #[id = "mix"]
+    mix: FloatParam,
     #[id = "output"]
     output: FloatParam,
     #[id = "bypass"]
@@ -501,6 +553,8 @@ impl Default for SpoolParams {
             flutter: trim("Flutter"),
             dropouts: trim("Dropouts"),
             hiss: trim("Hiss"),
+            elastic: knob("Elastic", 0.0),
+            mix: knob("Mix", 1.0),
             output: FloatParam::new(
                 "Output",
                 util::db_to_gain(0.0),
@@ -617,6 +671,7 @@ impl Plugin for Spool {
                 flutter: self.params.flutter.smoothed.next(),
                 dropouts: self.params.dropouts.smoothed.next(),
                 hiss: self.params.hiss.smoothed.next(),
+                elastic: self.params.elastic.smoothed.next(),
             };
             let coeffs = Coeffs::new(
                 self.params.drive.smoothed.next(),
@@ -625,6 +680,7 @@ impl Plugin for Spool {
                 fs,
             );
             let output = self.params.output.smoothed.next();
+            let mix = self.params.mix.smoothed.next();
             let (delay, dropout) = self.transport.next(&wear, base, fs);
             let target = if self.params.bypass.value() { 0.0 } else { 1.0 };
             self.wet += (target - self.wet).clamp(-fade_step, fade_step);
@@ -640,7 +696,7 @@ impl Plugin for Spool {
                 let tape = channel.delay.read(delay);
                 let noise = self.transport.noise();
                 let wet = channel.process(tape, &coeffs, noise) * dropout * output;
-                *sample = dry + (wet - dry) * self.wet;
+                *sample = dry + (wet - dry) * mix * self.wet;
                 *vu += (*sample * *sample - *vu) * vu_k;
             }
         }
@@ -754,6 +810,44 @@ mod tests {
         assert!(peak(&out) < 1e-6);
     }
 
+    /// Wow alone (no flutter or drift is unavoidable) as a fraction of its depth, over 20 s.
+    fn wow_curve(elastic: f32) -> Vec<f32> {
+        let fs = 48000.0;
+        let wear = Wear {
+            flutter: 0.0,
+            elastic,
+            ..Wear::all(1.0)
+        };
+        let mut tr = Transport::default();
+        (0..20 * fs as usize)
+            .map(|_| (tr.next(&wear, 0.0, fs).0) / (WOW_DEPTH * fs))
+            .collect()
+    }
+
+    #[test]
+    fn elastic_snaps_back_faster_than_it_sags() {
+        // Steepest fall vs steepest rise of the delay: 1 for a sine. The spring rounds the snap and
+        // its bounce adds steep rises, so expect well under the 5.7 of the bare shape
+        let ratio = |elastic| {
+            let w = wow_curve(elastic);
+            let slopes = w.windows(2).map(|p| p[1] - p[0]);
+            let (rise, fall) = slopes.fold((0f32, 0f32), |(r, f), d| (r.max(d), f.max(-d)));
+            fall / rise
+        };
+        let (plain, elastic) = (ratio(0.0), ratio(1.0));
+        assert!(
+            plain < 1.2 && elastic > 1.5,
+            "plain {plain}, elastic {elastic}"
+        );
+    }
+
+    #[test]
+    fn spring_rarely_hits_the_wow_limit() {
+        let w = wow_curve(1.0);
+        let pinned = w.iter().filter(|x| x.abs() > 0.999).count() as f32 / w.len() as f32;
+        assert!(pinned < 0.01, "{:.1}% of samples pinned", 100.0 * pinned);
+    }
+
     #[test]
     fn hiss_trim_silences_worn_tape() {
         let quiet = Wear {
@@ -840,6 +934,7 @@ mod tests {
             flutter: 2.0,
             dropouts: 2.0,
             hiss: 2.0,
+            elastic: 1.0,
         });
         // Never closer than 1 sample or past the buffer's 2 * base
         assert!(hi - lo > 0.016 * fs, "swing {lo}..{hi}");
@@ -861,6 +956,7 @@ mod tests {
             (p.flutter, &d.flutter),
             (p.dropouts, &d.dropouts),
             (p.hiss, &d.hiss),
+            (p.elastic, &d.elastic),
         ] {
             assert_eq!(preset, param.default_plain_value(), "{}", param.name());
         }

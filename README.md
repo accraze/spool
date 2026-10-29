@@ -13,8 +13,10 @@ your master, or push it for all-out lofi wonkiness.
 | Drive   | 0–24 dB | Tape saturation. Highs are pre-emphasised so they saturate first. Level-compensated: quiet parts stay put, peaks get squashed |
 | Colour  | 0–100% | Head bump (up to +4 dB at 90 Hz) and top-end roll-off (20 kHz → 5 kHz) |
 | Wear    | 0–100% | Wow and flutter, hiss, dropouts, and a further loss of highs. Low settings are near-inaudible; the top end gets wonky |
+| Mix     | 0–100% | Dry/tape blend. The dry signal is time-aligned; with Wow up a blend flanges/choruses |
 | Output  | −12 to +12 dB | Make-up gain |
 | Wow, Flutter, Dropouts, Hiss | 0–200% | Trims for each part of Wear (default 100%). A part behaves as if Wear were Wear × trim: turn one down to leave that part out, or up for more of it at low Wear. 200% goes past Wear's maximum (up to 4x the wow) |
+| Elastic | 0–100% | Rubbery wow: the tape sags slowly, snaps back and bounces before settling |
 | Lamp    | Bypass (lit when the tape is running) |
 | Tape    | ‹ › steps through 7 level-matched presets: 15 IPS, 30 IPS, Metal, Chrome, Ferric, Vintage, VHS. Shows CUSTOM once you tweak |
 

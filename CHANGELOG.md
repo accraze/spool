@@ -6,6 +6,12 @@ All notable changes to Spool are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- Mix knob (default 100%) to blend the tape with the dry signal, which stays time-aligned. With
+  Wow up, blending gives a tape-flange/chorus. Presets leave Mix alone.
+- Elastic knob (default 0%) for rubbery wow: the tape sags slowly, snaps back, and bounces on a
+  springy tape path before settling. Presets set it to 0%, so they sound as before.
+
 ## [0.4.0] - 2026-10-26
 
 ### Added

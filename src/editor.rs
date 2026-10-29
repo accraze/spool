@@ -169,19 +169,32 @@ fn deck(ui: &Ui, setter: &ParamSetter, params: &SpoolParams, meters: &Meters) {
     // Main controls, then the trims for each part of Wear underneath
     let rows = [
         (
-            [&params.drive, &params.colour, &params.wear, &params.output],
+            [
+                &params.drive,
+                &params.colour,
+                &params.wear,
+                &params.mix,
+                &params.output,
+            ],
             310.0,
-            28.0,
+            26.0,
         ),
         (
-            [&params.wow, &params.flutter, &params.dropouts, &params.hiss],
+            [
+                &params.wow,
+                &params.flutter,
+                &params.dropouts,
+                &params.hiss,
+                &params.elastic,
+            ],
             408.0,
             18.0,
         ),
     ];
     for (row, y, radius) in rows {
+        let n = row.len() as f32;
         for (i, param) in row.into_iter().enumerate() {
-            let x = body.left() + body.width() * (i as f32 + 0.5) / 4.0;
+            let x = body.left() + body.width() * (i as f32 + 0.5) / n;
             knob(ui, setter, param, Pos2::new(x, body.top() + y), radius);
         }
     }
@@ -423,7 +436,7 @@ fn knob(ui: &Ui, setter: &ParamSetter, param: &FloatParam, center: Pos2, radius:
 }
 
 /// The preset's values for each float param, in plain units.
-fn preset_values<'a>(params: &'a SpoolParams, p: &Preset) -> [(&'a FloatParam, f32); 8] {
+fn preset_values<'a>(params: &'a SpoolParams, p: &Preset) -> [(&'a FloatParam, f32); 9] {
     [
         (&params.drive, p.drive_db),
         (&params.colour, p.colour),
@@ -433,6 +446,7 @@ fn preset_values<'a>(params: &'a SpoolParams, p: &Preset) -> [(&'a FloatParam, f
         (&params.flutter, p.flutter),
         (&params.dropouts, p.dropouts),
         (&params.hiss, p.hiss),
+        (&params.elastic, p.elastic),
     ]
 }
 

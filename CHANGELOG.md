@@ -6,6 +6,10 @@ All notable changes to Spool are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- The tape selector moved above the pilot lamp, where it has room to breathe instead of crowding
+  the reels.
+
 ## [0.5.0] - 2026-10-28
 
 ### Added

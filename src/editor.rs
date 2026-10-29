@@ -126,7 +126,7 @@ fn deck(ui: &Ui, setter: &ParamSetter, params: &SpoolParams, meters: &Meters) {
         ui,
         setter,
         &params.bypass,
-        Pos2::new(body.center().x, body.top() + 44.0),
+        Pos2::new(body.center().x, body.top() + 96.0),
     );
 
     let logo = Pos2::new(body.left() + 112.0, body.top() + 200.0);
@@ -157,7 +157,7 @@ fn deck(ui: &Ui, setter: &ParamSetter, params: &SpoolParams, meters: &Meters) {
         ui,
         setter,
         params,
-        Pos2::new(body.center().x, body.top() + 108.0),
+        Pos2::new(body.center().x, body.top() + 38.0),
     );
 
     for (i, label) in ["L", "R"].into_iter().enumerate() {
